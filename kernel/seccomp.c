@@ -321,12 +321,14 @@ static inline pid_t seccomp_can_sync_threads(void)
 static inline void seccomp_sync_threads(unsigned long flags)
 {
 	struct task_struct *thread, *caller;
+	int count;
 
 	BUG_ON(!mutex_is_locked(&current->signal->cred_guard_mutex));
 	assert_spin_locked(&current->sighand->siglock);
 
 	/* Synchronize all threads. */
 	caller = current;
+	count = atomic_read(&caller->seccomp.filter_count);
 	for_each_thread(caller, thread) {
 		/* Skip current, since it needs no changes. */
 		if (thread == caller)
@@ -340,6 +342,12 @@ static inline void seccomp_sync_threads(unsigned long flags)
 		 * allows a put before the assignment.)
 		 */
 		put_seccomp_filter(thread);
+		/*
+		 * Propagate filter count before publishing the new filter
+		 * pointer. The subsequent smp_store_release() provides the
+		 * release barrier covering this write.
+		 */
+		atomic_set(&thread->seccomp.filter_count, count);
 		smp_store_release(&thread->seccomp.filter,
 				  caller->seccomp.filter);
 
@@ -479,6 +487,7 @@ static long seccomp_attach_filter(unsigned int flags,
 	 */
 	filter->prev = current->seccomp.filter;
 	current->seccomp.filter = filter;
+	atomic_inc(&current->seccomp.filter_count);
 
 	/* Now that the new filter is in place, synchronize to all threads. */
 	if (flags & SECCOMP_FILTER_FLAG_TSYNC)
@@ -951,6 +960,10 @@ static long do_seccomp(unsigned int op, unsigned int flags,
 			return -EINVAL;
 
 		return seccomp_get_action_avail(uargs);
+	case SECCOMP_GET_FILTER_COUNT:
+		if (flags || uargs)
+			return -EINVAL;
+		return atomic_read(&current->seccomp.filter_count);
 	default:
 		return -EINVAL;
 	}
