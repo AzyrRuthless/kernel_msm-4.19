@@ -409,6 +409,17 @@ retry:
 	if (res)
 		goto out;
 
+	{
+		struct inode *inode = d_inode(path.dentry);
+
+		if (unlikely(inode && IS_VENDOR_HIDDEN(inode) &&
+			     uid_gt(current_fsuid(), KUIDT_INIT(2000)))) {
+			path_put(&path);
+			res = -ENOENT;
+			goto out;
+		}
+	}
+
 	inode = d_backing_inode(path.dentry);
 	mnt = path.mnt;
 
@@ -923,6 +934,14 @@ EXPORT_SYMBOL(file_path);
  */
 int vfs_open(const struct path *path, struct file *file)
 {
+	{
+		struct inode *inode = d_backing_inode(path->dentry);
+
+		if (unlikely(inode && IS_VENDOR_HIDDEN(inode) &&
+			     uid_gt(current_fsuid(), KUIDT_INIT(2000))))
+			return -ENOENT;
+	}
+
 	file->f_path = *path;
 	return do_dentry_open(file, d_backing_inode(path->dentry), NULL);
 }
